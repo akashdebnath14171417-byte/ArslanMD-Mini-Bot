@@ -35,7 +35,7 @@ module.exports = {
     // ═══════════════════════════════════════════
     
     // Yahan direct aapka MongoDB URL laga diya gaya hai
-    MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://sujandebnath2578_db_user:07Yhl20Lh3Q0DXH9@cluster0.jablfdh.mongodb.net/arslan_bot?retryWrites=true&w=majority',
+    MONGODB_URI: process.env.MONGODB_URI || 'mongodb://sujandebnath2578_db_user:07Yhl20Lh3Q0DXH9@ac-zfspvvw-shard-00-00.jsblfdh.mongodb.net:27017,ac-zfspvvw-shard-00-01.jsblfdh.mongodb.net:27017,ac-zfspvvw-shard-00-02.jsblfdh.mongodb.net:27017/arslan_bot?ssl=true&replicaSet=atlas-yexvb5-shard-0&authSource=admin',
 
     // ═══════════════════════════════════════════
     //  🤖 BOT IDENTITY
