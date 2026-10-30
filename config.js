@@ -6,7 +6,7 @@
 // ██║  ██║██║  ██║███████║███████╗██║  ██║██║  ████║     ██║ ╚═╝ ██║██████╔╝
 // ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝   ╚═══╝    ╚═╝     ╚═╝╚═════╝ 
 // ═══════════════════════════════════════════════════════════════════════════
-//                    ARSLAN MD - BOT CONFIGURATION
+//                    ARSLAN MD - BOT CONFIGURATION (FINAL WORKING)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fs = require('fs');
@@ -25,12 +25,12 @@ if (fs.existsSync('.env')) {
 module.exports = {
 
     // ═══════════════════════════════════════════
-    //  🔐 SESSION & DATABASE (LIVE CONNECTION)
+    //  🔐 SESSION & DATABASE (WORKING CREDENTIALS)
     // ═══════════════════════════════════════════
     SESSION_ID: process.env.SESSION_ID || "MINI BOT",
     
-    // Aapka naya password YECvgysJzh0w6ZTQ yahan add kar diya gaya hai
-    MONGODB_URI: 'mongodb://sujandebnath2578_db_user:YECvgysJzh0w6ZTQ@ac-zfspvvw-shard-00-00.jablfdh.mongodb.net:27017,ac-zfspvvw-shard-00-01.jablfdh.mongodb.net:27017,ac-zfspvvw-shard-00-02.jablfdh.mongodb.net:27017/arslan_bot?ssl=true&replicaSet=atlas-yexvb5-shard-0&authSource=admin',
+    // Yahan aapke naye sahi credentials daal diye gaye hain
+    MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://sheikhsalman9470_db_user:EukC4qWOryy8XPST@cluster0.195ruaj.mongodb.net/arslan_bot?retryWrites=true&w=majority&authSource=admin',
 
     // ═══════════════════════════════════════════
     //  🤖 BOT IDENTITY
