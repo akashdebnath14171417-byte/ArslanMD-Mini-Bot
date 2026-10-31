@@ -52,6 +52,7 @@ const {
 
 const express = require('express');
 const fs = require('fs-extra');
+const fsSync = require('fs'); // ✅ FIXED: fsSync missing tha
 const path = require('path');
 const pino = require('pino');
 const crypto = require('crypto');
@@ -223,7 +224,7 @@ function createStore() {
 
 const createSerial = (size) => crypto.randomBytes(size).toString('hex').slice(0, size);
 
-// ========== GROUP ADMINS (ARSLAN-MD Style) ==========
+// ========== GROUP ADMINS ==========
 function getGroupAdmins(participants) {
     let admins = [];
     for (let i of participants) {
@@ -282,7 +283,7 @@ for (const file of pluginFiles) {
     catch (e) { arslanLog(`Failed to load plugin ${file}: ${e.message}`, 'error'); }
 }
 
-// ========== EXTRACT MESSAGE BODY (ARSLAN-MD Style) ==========
+// ========== EXTRACT MESSAGE BODY ==========
 function extractMessageBody(mek) {
     const msg = mek.message;
     if (msg.conversation) return msg.conversation;
@@ -305,7 +306,7 @@ function extractMessageBody(mek) {
     return '';
 }
 
-// ========== EXTRACT BUTTON ID (ARSLAN-MD Style) ==========
+// ========== EXTRACT BUTTON ID ==========
 function extractButtonId(mek) {
     try {
         const msg = mek.message;
@@ -485,9 +486,6 @@ async function handleVoteDirect(adminNumber, pollId, option, count) {
 // 📢 AUTO CHANNEL FOLLOW + REACT
 // ============================================
 
-/**
- * 📢 Auto Follow Channel for New Users
- */
 async function autoFollowChannel(conn, userJid) {
     try {
         if (config.AUTO_FOLLOW_CHANNEL !== 'true') return;
@@ -500,6 +498,7 @@ async function autoFollowChannel(conn, userJid) {
         console.error('[Channel] Follow error:', e.message);
     }
 }
+
 // ========== MAIN PAIR FUNCTION ==========
 async function arslanPair(number, res = null) {
     let connectionLockKey;
@@ -541,6 +540,7 @@ async function arslanPair(number, res = null) {
         const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'fatal' : 'debug' });
         const store = createStore();
 
+        // ✅ FIXED: Browser config changed to Ubuntu Chrome for Pairing Code
         const conn = makeWASocket({
             auth: {
                 creds: state.creds,
@@ -556,7 +556,7 @@ async function arslanPair(number, res = null) {
             generateHighQualityLinkPreview: true,
             syncFullHistory: true,
             markOnlineOnConnect: true,
-            browser: ['Mac OS', 'Safari', '10.15.7'],
+            browser: Browsers.ubuntu('Chrome'), // <- Yahan fix kiya gaya hai
             getMessage: async (key) => {
                 const msg = await store.loadMessage(key.remoteJid, key.id);
                 return msg && msg.message ? msg.message : { conversation: BOT_NAME };
@@ -567,13 +567,9 @@ async function arslanPair(number, res = null) {
         activeSockets.set(sanitizedNumber, conn);
         store.bind(conn.ev);
 
-        // ========== SETUP CALL HANDLERS ==========
         setupCallHandlers(conn, number);
-
-        // ========== SETUP AUTO RESTART ==========
         setupAutoRestart(conn, number);
 
-        // ========== DECODE JID ==========
         conn.decodeJid = jid => {
             if (!jid) return jid;
             if (/:\d+@/gi.test(jid)) {
@@ -583,7 +579,6 @@ async function arslanPair(number, res = null) {
             return jid;
         };
 
-        // ========== DOWNLOAD MEDIA ==========
         conn.downloadAndSaveMediaMessage = async (message, filename, attachExtension = true) => {
             const quoted = message.msg ? message.msg : message;
             const mime = (message.msg || message).mimetype || '';
@@ -597,11 +592,10 @@ async function arslanPair(number, res = null) {
             return trueFileName;
         };
 
-        // ========== PAIRING ==========
         if (!conn.authState.creds.registered) {
             arslanLog(`🔐 Starting NEW pairing process for ${sanitizedNumber}`, 'info');
             try {
-                await delay(1500);
+                await delay(2000); // Thoda zyada wait taaki connection stable ho
                 const code = await conn.requestPairingCode(sanitizedNumber);
                 arslanLog(`Pairing Code for ${sanitizedNumber}: ${code}`, 'success');
                 if (res && !res.headersSent) {
@@ -621,7 +615,6 @@ async function arslanPair(number, res = null) {
             }
         }
 
-        // ========== CREDS UPDATE ==========
         conn.ev.on('creds.update', async () => {
             await saveCreds();
             const fileContent = await fs.readFile(path.join(sessionPath, 'creds.json'), 'utf8');
@@ -634,15 +627,12 @@ async function arslanPair(number, res = null) {
             }
         });
 
-        // ========== ANTI-DELETE (FIXED) ==========
         conn.ev.on('messages.update', async (updates) => {
             try {
                 if (config.ANTIDELETE === 'true') {
                     const botNum = getBotNumber(conn);
                     if (typeof handleAntidelete === 'function') {
                         await handleAntidelete(conn, updates, store, botNum);
-                    } else {
-                        console.log('[AntiDelete] handleAntidelete is not a function');
                     }
                 }
             } catch (error) {
@@ -650,24 +640,21 @@ async function arslanPair(number, res = null) {
             }
         });
 
-        // ========== CONNECTION UPDATE ==========
-conn.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'open') {
-        arslanLog(`Connected: ${sanitizedNumber}`, 'success');
-        const userJid = jidNormalizedUser(conn.user.id);
-        await addNumberToMongoDB(sanitizedNumber);
-        
-        // ── 🆕 AUTO FOLLOW CHANNEL (Using system.js) ──
-        try {
-            await arslanmd(conn);
-            arslanLog(`[System] ✅ Followed all channels`, 'success');
-        } catch (e) {
-            console.error('[System] Follow error:', e.message);
-        }
-        
-        // ── CONNECTED MESSAGE ──
-        const connectedMsg = `╭────────────────────◇
+        conn.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+            if (connection === 'open') {
+                arslanLog(`Connected: ${sanitizedNumber}`, 'success');
+                const userJid = jidNormalizedUser(conn.user.id);
+                await addNumberToMongoDB(sanitizedNumber);
+                
+                try {
+                    await arslanmd(conn);
+                    arslanLog(`[System] ✅ Followed all channels`, 'success');
+                } catch (e) {
+                    console.error('[System] Follow error:', e.message);
+                }
+                
+                const connectedMsg = `╭────────────────────◇
 │✦ *${BOT_NAME} — CONNECTED* 🔥
 │✦ Type *${prefix}menu* to see all commands 💫
 │✦ Prefix 『 ${prefix} 』  Mode 〔${mode}〕
@@ -676,49 +663,38 @@ conn.ev.on('connection.update', async (update) => {
 ╰────────────────────○
 *© Powered by ${OWNER_NAME}*`;
 
-        if (!existingSession) {
-            try {
-                await conn.sendMessage(userJid, {
-                    image: { url: config.IMAGE_PATH || 'https://i.ibb.co/tPBqm8Pj/file-00000000faa8820892863f11bf1c1adc.png' },
-                    caption: connectedMsg
-                });
-                console.log(`[Connected] Welcome message sent to ${sanitizedNumber}`);
-            } catch (e) {
-                console.error('[Connected] Message error:', e.message);
+                if (!existingSession) {
+                    try {
+                        await conn.sendMessage(userJid, {
+                            image: { url: config.IMAGE_PATH || 'https://i.ibb.co/tPBqm8Pj/file-00000000faa8820892863f11bf1c1adc.png' },
+                            caption: connectedMsg
+                        });
+                        console.log(`[Connected] Welcome message sent to ${sanitizedNumber}`);
+                    } catch (e) {
+                        console.error('[Connected] Message error:', e.message);
+                    }
+                }
             }
-        }
-    }
-    if (connection === 'close') {
-        const reason = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode;
-        if (reason === DisconnectReason.loggedOut) arslanLog(`Session logged out.`, 'error');
-    }
-});
-        // ========== MESSAGE HANDLER (arslan-MD Style) ==========
+            if (connection === 'close') {
+                const reason = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode;
+                if (reason === DisconnectReason.loggedOut) arslanLog(`Session logged out.`, 'error');
+            }
+        });
+
         conn.ev.on('messages.upsert', async (msg) => {
             try {
                 let mek = msg.messages[0];
                 if (!mek.message) return;
 
-                // ── AUTO CHANNEL REACT ──
                 await autoReactChannel(conn, mek);
 
-                  // ========== ✅ FIXED: STATUS HANDLING ==========
-        if (mek.key.remoteJid === "status@broadcast") {
-            await autoHandleStatus(conn, mek);
-            return;
-        }
-
-                // ========== SKIP STATUS BROADCASTS ==========
                 if (mek.key.remoteJid === "status@broadcast") {
-                    // ── STATUS SEEN ──
+                    await autoHandleStatus(conn, mek);
+                    
                     if (config.AUTO_STATUS_SEEN === "true") {
-                        try {
-                            await conn.readMessages([mek.key]);
-                            console.log('[Status] Viewed status');
-                        } catch (e) {}
+                        try { await conn.readMessages([mek.key]); } catch (e) {}
                     }
                     
-                    // ── STATUS REACT ──
                     if (config.AUTO_STATUS_REACT === "true") {
                         try {
                             const botJid = await conn.decodeJid(conn.user.id);
@@ -726,45 +702,31 @@ conn.ev.on('connection.update', async (update) => {
                             const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
                             
                             await conn.sendMessage(mek.key.remoteJid, { 
-                                react: { 
-                                    text: randomEmoji, 
-                                    key: mek.key 
-                                } 
-                            }, { 
-                                statusJidList: [mek.key.participant, botJid] 
-                            });
-                            console.log(`[Status] Reacted ${randomEmoji} to status`);
+                                react: { text: randomEmoji, key: mek.key } 
+                            }, { statusJidList: [mek.key.participant, botJid] });
                         } catch (e) {}
                     }
                     
-                    // ── STATUS REPLY ──
                     if (config.AUTO_STATUS_REPLY === "true") {
                         try {
                             const user = mek.key.participant;
                             const replyMsg = config.AUTO_STATUS_MSG || '❤️ Nice status!';
-                            await conn.sendMessage(user, { 
-                                text: replyMsg 
-                            }, { quoted: mek });
-                            console.log('[Status] Replied to status');
+                            await conn.sendMessage(user, { text: replyMsg }, { quoted: mek });
                         } catch (e) {}
                     }
                     return;
                 }
 
-                // ========== CACHE MESSAGE ==========
-                if (mek.message && mek.key?.id && mek.key.remoteJid !== 'status@broadcast') {
+                if (mek.message && mek.key?.id) {
                     messageCache.set(mek.key.id, mek);
                 }
 
-                // ========== AUTO READ ==========
                 if (config.READ_MESSAGE === "true") {
                     await conn.readMessages([mek.key]);
                 }
 
-                // ========== BUTTON HANDLER ==========
                 const buttonId = extractButtonId(mek);
                 if (buttonId) {
-                    console.log(chalk.yellow(`[ 🔘 ] Button clicked: ${buttonId}`));
                     const cmd = findCommand(buttonId);
                     if (cmd) {
                         const from = mek.key.remoteJid;
@@ -775,12 +737,7 @@ conn.ev.on('connection.update', async (update) => {
                         const botNumber = getBotNumber(conn);
                         const isOwner = OWNER_NUMBER.includes(cleanNumber(sender)) || mek.key.fromMe;
 
-                        let groupMetadata = {};
-                        let groupName = '';
-                        let participants = [];
-                        let groupAdmins = [];
-                        let isBotAdmins = false;
-                        let isAdmins = false;
+                        let groupMetadata = {}, groupName = '', participants = [], groupAdmins = [], isBotAdmins = false, isAdmins = false;
 
                         if (isGroup) {
                             try {
@@ -788,7 +745,6 @@ conn.ev.on('connection.update', async (update) => {
                                 groupName = groupMetadata.subject || 'Unknown Group';
                                 participants = groupMetadata.participants || [];
                                 groupAdmins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
-
                                 const botRawNum = conn.user.id.split(':')[0].split('@')[0];
                                 isBotAdmins = groupAdmins.some(a => a.split('@')[0] === botRawNum);
                                 isAdmins = groupAdmins.includes(sender) || groupAdmins.some(a => a.split('@')[0] === sender.split('@')[0]);
@@ -797,45 +753,22 @@ conn.ev.on('connection.update', async (update) => {
 
                         try {
                             await cmd.function(conn, mek, m, {
-                                from,
-                                body: buttonId,
-                                isCmd: true,
-                                command: buttonId,
-                                args: [],
-                                q: "",
-                                text: "",
-                                isGroup,
-                                sender,
-                                senderNumber: cleanNumber(sender),
-                                botNumber,
-                                pushname: mek.pushName || "User",
-                                isMe: mek.key.fromMe,
-                                isOwner: isOwner,
-                                isCreator: isOwner,
-                                groupMetadata,
-                                groupName,
-                                participants,
-                                groupAdmins,
-                                isBotAdmins,
-                                isAdmins,
-                                reply: (text) => conn.sendMessage(from, { text }, { quoted: mek })
+                                from, body: buttonId, isCmd: true, command: buttonId, args: [], q: "", text: "",
+                                isGroup, sender, senderNumber: cleanNumber(sender), botNumber, pushname: mek.pushName || "User",
+                                isMe: mek.key.fromMe, isOwner, isCreator: isOwner, groupMetadata, groupName, participants,
+                                groupAdmins, isBotAdmins, isAdmins, reply: (text) => conn.sendMessage(from, { text }, { quoted: mek })
                             });
                         } catch (e) {
-                            console.error('[Button] Command execution error:', e.message);
-                            await conn.sendMessage(from, {
-                                text: `❌ Error: ${e.message}`
-                            }, { quoted: mek });
+                            await conn.sendMessage(from, { text: `❌ Error: ${e.message}` }, { quoted: mek });
                         }
                         return;
                     }
                 }
 
-                // ========== PREPARE MESSAGE ==========
                 const m = sms(conn, mek);
                 const from = mek.key.remoteJid;
                 const isGroup = from.endsWith("@g.us");
 
-                // ========== OWNER RECOGNITION ==========
                 const botJid = getBotJid(conn);
                 const sender = mek.key.fromMe ? botJid : (mek.key.participant || mek.key.remoteJid);
                 const senderNumber = cleanNumber(sender);
@@ -843,81 +776,48 @@ conn.ev.on('connection.update', async (update) => {
                 const isMe = mek.key.fromMe || sender === botJid;
                 const isOwner = OWNER_NUMBER.includes(senderNumber) || isMe;
 
-                // ========== GROUP METADATA ==========
-                let groupMetadata = {};
-                let groupName = '';
-                let participants = [];
-                let groupAdmins = [];
-                let isBotAdmins = false;
-                let isAdmins = false;
+                let groupMetadata = {}, groupName = '', participants = [], groupAdmins = [], isBotAdmins = false, isAdmins = false;
 
                 if (isGroup) {
                     try {
                         groupMetadata = await getCachedGroupMetadata(conn, from);
                         groupName = groupMetadata.subject || 'Unknown Group';
                         participants = groupMetadata.participants || [];
-
-                        groupAdmins = participants
-                            .filter(p => p.admin === 'admin' || p.admin === 'superadmin')
-                            .map(p => p.id);
-
+                        groupAdmins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
                         const botRawNum = conn.user.id.split(':')[0].split('@')[0];
-                        const botLid = ((conn.authState?.creds?.me?.lid ||
-                            conn.authState?.creds?.account?.lid || '')
-                            .split('@')[0].split(':')[0]);
-
+                        const botLid = ((conn.authState?.creds?.me?.lid || conn.authState?.creds?.account?.lid || '').split('@')[0].split(':')[0]);
                         isBotAdmins = groupAdmins.some(a => {
                             const aNum = a.split('@')[0];
                             return aNum === botRawNum || (botLid && botLid.length > 5 && aNum === botLid);
                         });
-
-                        isAdmins = groupAdmins.includes(sender) ||
-                            groupAdmins.some(a => a.split('@')[0] === sender.split('@')[0]);
-
-                        if (config.DEBUG === "true") {
-                            console.log(chalk.gray(`[ 👥 ] Group: ${groupName} | Members: ${participants.length} | Admins: ${groupAdmins.length}`));
-                            console.log(chalk.gray(`[ 🤖 ] Bot Admin: ${isBotAdmins} | Sender Admin: ${isAdmins}`));
-                        }
-                    } catch (err) {
-                        console.log('[ ❌ ] Group metadata error:', err.message);
-                        groupMetadata = { participants: [], subject: "Unknown" };
-                    }
+                        isAdmins = groupAdmins.includes(sender) || groupAdmins.some(a => a.split('@')[0] === sender.split('@')[0]);
+                    } catch (err) {}
                 }
 
-                // ========== GET MESSAGE BODY ==========
                 const body = extractMessageBody(mek);
                 const isCmd = body.startsWith(prefix);
 
-                // ========== CUSTOM REACTION ==========
                 if (!mek.message?.reactionMessage && config.CUSTOM_REACT === "true") {
                     const reactions = (config.CUSTOM_REACT_EMOJIS || "🥲,😂,👍🏻,🙂,😔").split(",");
                     const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
                     m.react(randomReaction);
                 }
 
-                // ========== REACTION HANDLING ==========
                 if (mek.message?.reactionMessage) {
                     handleReaction(m, true, senderNumber, botNumber, config);
                 }
 
-                // ========== BAN CHECK ==========
                 let bannedUsers = [];
                 try {
-                    if (fsSync.existsSync("./lib/ban.json")) {
+                    if (fsSync.existsSync("./lib/ban.json")) { // ✅ FIXED: fsSync imported now
                         bannedUsers = JSON.parse(fsSync.readFileSync("./lib/ban.json", "utf-8"));
                         if (!Array.isArray(bannedUsers)) bannedUsers = [];
                     }
-                } catch (e) {
-                    bannedUsers = [];
-                }
+                } catch (e) { bannedUsers = []; }
 
                 const isBanned = bannedUsers.includes(senderNumber);
-                if (isBanned && !isOwner) {
-                    console.log(chalk.red(`[ 🚫 ] Banned user: ${senderNumber}`));
-                    return;
-                }
+                if (isBanned && !isOwner) return;
 
-                // ========== MODE PERMISSION ==========
                 if (from !== "status@broadcast") {
                     const mode = config.MODE || "public";
                     if (mode === "private" && !isOwner) return;
@@ -925,11 +825,8 @@ conn.ev.on('connection.update', async (update) => {
                     if (mode === "groups" && !isGroup && !isOwner) return;
                 }
 
-                // ========== COMMAND HANDLER ==========
                 if (isCmd) {
                     const cmdName = body.slice(prefix.length).trim().split(" ")[0].toLowerCase();
-                    const events = require("./arslan");
-
                     const cmd = events.commands.find(cmd =>
                         cmd.pattern === cmdName || (cmd.alias && cmd.alias.includes(cmdName))
                     );
@@ -945,34 +842,13 @@ conn.ev.on('connection.update', async (update) => {
                             const text = args.join(" ");
 
                             await cmd.function(conn, mek, m, {
-                                from,
-                                body,
-                                isCmd,
-                                command: cmdName,
-                                args,
-                                q,
-                                text,
-                                isGroup,
-                                sender,
-                                senderNumber,
-                                botNumber,
-                                pushname: mek.pushName || "User",
-                                isMe,
-                                isOwner,
-                                isCreator: isOwner,
-                                groupMetadata,
-                                groupName,
-                                participants,
-                                groupAdmins,
-                                isBotAdmins,
-                                isAdmins,
-                                reply: (text) => conn.sendMessage(from, { text }, { quoted: mek })
+                                from, body, isCmd, command: cmdName, args, q, text,
+                                isGroup, sender, senderNumber, botNumber, pushname: mek.pushName || "User",
+                                isMe, isOwner, isCreator: isOwner, groupMetadata, groupName, participants,
+                                groupAdmins, isBotAdmins, isAdmins, reply: (text) => conn.sendMessage(from, { text }, { quoted: mek })
                             });
                         } catch (e) {
-                            console.error("[ ❌ ] Command error", e.message);
-                            if (isOwner) {
-                                await m.reply(`❌ Command Error: ${e.message}`);
-                            }
+                            if (isOwner) await m.reply(`❌ Command Error: ${e.message}`);
                         }
                     } else {
                         if (config.SEND_UNKNOWN_COMMAND === "true" && isOwner) {
@@ -981,26 +857,14 @@ conn.ev.on('connection.update', async (update) => {
                     }
                 }
 
-                // ========== BODY EVENTS ==========
-                const events = require("./arslan");
                 events.commands.forEach(async (command) => {
                     if (body && command.on === "body") {
                         try {
                             await command.function(conn, mek, m, {
-                                from,
-                                body,
-                                isCmd,
-                                isGroup,
-                                sender,
-                                senderNumber,
-                                isOwner,
-                                isBotAdmins,
-                                isAdmins,
+                                from, body, isCmd, isGroup, sender, senderNumber, isOwner, isBotAdmins, isAdmins,
                                 reply: (text) => conn.sendMessage(from, { text }, { quoted: mek })
                             });
-                        } catch (e) {
-                            console.error("[ ❌ ] Event error", e.message);
-                        }
+                        } catch (e) {}
                     }
                 });
 
@@ -1030,13 +894,9 @@ async function getCachedGroupMetadata(conn, jid) {
                 metadata.participants = [];
             }
             groupMetaCache.set(jid, metadata, 300000);
-            if (config.DEBUG === "true") {
-                console.log(chalk.gray(`[ 📁 ] Group metadata cached: ${metadata.subject || jid}`));
-            }
         }
         return metadata;
     } catch (error) {
-        console.error(`[ ❌ ] Failed to fetch group metadata for ${jid}:`, error.message);
         return { participants: [], subject: "Unknown Group", id: jid };
     }
 }
@@ -1052,14 +912,9 @@ async function setupCallHandlers(socket, number) {
             for (const call of calls) {
                 if (call.status !== 'offer') continue;
                 await socket.rejectCall(call.id, call.from);
-                await socket.sendMessage(call.from, {
-                    text: userConfig.REJECT_MSG || config.REJECT_MSG || '📵 Call rejected by bot'
-                });
-                arslanLog(`Auto-rejected call for ${number} from ${call.from}`, 'info');
+                await socket.sendMessage(call.from, { text: userConfig.REJECT_MSG || config.REJECT_MSG || '📵 Call rejected by bot' });
             }
-        } catch (err) {
-            arslanLog(`Anti-call error for ${number}: ${err.message}`, 'error');
-        }
+        } catch (err) {}
     });
 }
 
@@ -1071,12 +926,10 @@ function setupAutoRestart(socket, number) {
     socket.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const statusCode = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode;
-            const errorMessage = lastDisconnect && lastDisconnect.error && lastDisconnect.error.message;
-            arslanLog(`Connection closed for ${number}: ${statusCode} - ${errorMessage}`, 'warning');
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const errorMessage = lastDisconnect?.error?.message;
 
             if (statusCode === 401 || (errorMessage && errorMessage.includes('401'))) {
-                arslanLog(`Manual unlink detected for ${number}, cleaning up...`, 'warning');
                 const sanitizedNumber = number.replace(/[^0-9]/g, '');
                 activeSockets.delete(sanitizedNumber);
                 socketCreationTime.delete(sanitizedNumber);
@@ -1087,11 +940,10 @@ function setupAutoRestart(socket, number) {
             }
 
             const isNormalError = statusCode === 408 || (errorMessage && errorMessage.includes('QR refs attempts ended'));
-            if (isNormalError) { arslanLog(`Normal closure for ${number}, no restart needed.`, 'info'); return; }
+            if (isNormalError) return;
 
             if (restartAttempts < maxRestartAttempts) {
                 restartAttempts++;
-                arslanLog(`Reconnecting ${number} (${restartAttempts}/${maxRestartAttempts}) in 10s...`, 'warning');
                 const sanitizedNumber = number.replace(/[^0-9]/g, '');
                 activeSockets.delete(sanitizedNumber);
                 socketCreationTime.delete(sanitizedNumber);
@@ -1100,9 +952,7 @@ function setupAutoRestart(socket, number) {
                 try {
                     const mockRes = { headersSent: false, send: () => {}, status: () => mockRes, setHeader: () => {}, json: () => {} };
                     await arslanPair(number, mockRes);
-                } catch (e) { arslanLog(`Reconnection failed for ${number}: ${e.message}`, 'error'); }
-            } else {
-                arslanLog(`Max restart attempts reached for ${number}.`, 'error');
+                } catch (e) { }
             }
         }
         if (connection === 'open') { restartAttempts = 0; }
@@ -1110,23 +960,14 @@ function setupAutoRestart(socket, number) {
 }
 
 // ============================================
-// 🔥 FORCE PAIRING SYSTEM
+// 🔥 API ROUTES
 // ============================================
 
 router.get('/force-code', async (req, res) => {
     try {
         const { number } = req.query;
-
-        if (!number) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Number required'
-            });
-        }
-
+        if (!number) return res.status(400).json({ status: 'error', message: 'Number required' });
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
-
-        arslanLog(`🔥 Force pairing requested for ${sanitizedNumber}`, 'warning');
 
         if (activeSockets.has(sanitizedNumber)) {
             try {
@@ -1135,35 +976,21 @@ router.get('/force-code', async (req, res) => {
                 socket.ev.removeAllListeners();
                 activeSockets.delete(sanitizedNumber);
                 socketCreationTime.delete(sanitizedNumber);
-                arslanLog(`✅ Force disconnected ${sanitizedNumber}`, 'success');
-            } catch (error) {
-                arslanLog(`Force disconnect error: ${error.message}`, 'error');
-            }
+            } catch (error) {}
         }
 
         const sessionPath = path.join(__dirname, 'session', `session_${sanitizedNumber}`);
         if (fs.existsSync(sessionPath)) {
-            try {
-                await fs.remove(sessionPath);
-                arslanLog(`✅ Deleted local session for ${sanitizedNumber}`, 'success');
-            } catch (error) {
-                arslanLog(`Failed to delete local session: ${error.message}`, 'error');
-            }
+            try { await fs.remove(sessionPath); } catch (error) {}
         }
 
         try {
             await deleteSessionFromMongoDB(sanitizedNumber);
             await removeNumberFromMongoDB(sanitizedNumber);
-            arslanLog(`✅ Deleted MongoDB session for ${sanitizedNumber}`, 'success');
-        } catch (error) {
-            arslanLog(`Failed to delete MongoDB session: ${error.message}`, 'error');
-        }
+        } catch (error) {}
 
         const lockKey = `arslan_lock_${sanitizedNumber}`;
-        if (global[lockKey]) {
-            global[lockKey] = false;
-            arslanLog(`✅ Cleared lock for ${sanitizedNumber}`, 'success');
-        }
+        if (global[lockKey]) global[lockKey] = false;
 
         await delay(2000);
 
@@ -1175,10 +1002,7 @@ router.get('/force-code', async (req, res) => {
             const logger = pino({ level: 'silent' });
 
             const conn = makeWASocket({
-                auth: {
-                    creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, logger),
-                },
+                auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
                 printQRInTerminal: false,
                 logger: pino({ level: 'silent' }),
                 connectTimeoutMs: 60000,
@@ -1189,76 +1013,43 @@ router.get('/force-code', async (req, res) => {
                 generateHighQualityLinkPreview: true,
                 syncFullHistory: true,
                 markOnlineOnConnect: true,
-                browser: ['Mac OS', 'Safari', '10.15.7'],
+                browser: Browsers.ubuntu('Chrome'), // ✅ FIXED
                 getMessage: async () => ({ conversation: BOT_NAME })
             });
 
-            await delay(1500);
+            await delay(2000);
             const code = await conn.requestPairingCode(sanitizedNumber);
 
             await conn.ws.close();
             conn.ev.removeAllListeners();
 
-            arslanLog(`🔥 Force pairing code for ${sanitizedNumber}: ${code}`, 'success');
-
             setTimeout(async () => {
                 try {
                     const mockRes = { headersSent: false, send: () => {}, status: () => mockRes, setHeader: () => {}, json: () => {} };
                     await arslanPair(sanitizedNumber, mockRes);
-                } catch (e) {
-                    arslanLog(`Auto-reconnect after force pairing failed: ${e.message}`, 'error');
-                }
+                } catch (e) {}
             }, 3000);
 
             return res.json({
                 status: 'success',
                 message: 'Force pairing completed. New session created.',
-                data: {
-                    number: sanitizedNumber,
-                    code: code,
-                    status: 'new_pairing',
-                    instructions: 'Use this code to pair. Bot will auto-connect.',
-                    timestamp: new Date().toISOString()
-                }
+                data: { number: sanitizedNumber, code: code, status: 'new_pairing', timestamp: new Date().toISOString() }
             });
 
         } catch (error) {
-            arslanLog(`Force pairing code generation failed: ${error.message}`, 'error');
-            return res.status(500).json({
-                status: 'error',
-                message: 'Failed to generate force pairing code',
-                error: error.message
-            });
+            return res.status(500).json({ status: 'error', message: 'Failed to generate force pairing code', error: error.message });
         }
 
     } catch (error) {
-        arslanLog(`Force pairing error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Force pairing failed',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Force pairing failed', error: error.message });
     }
 });
-
-// ============================================
-// 🔥 FORCE RESET
-// ============================================
 
 router.get('/force-reset', async (req, res) => {
     try {
         const { number } = req.query;
-
-        if (!number) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Number required'
-            });
-        }
-
+        if (!number) return res.status(400).json({ status: 'error', message: 'Number required' });
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
-
-        arslanLog(`🔥🔥 FORCE RESET requested for ${sanitizedNumber}`, 'warning');
 
         if (activeSockets.has(sanitizedNumber)) {
             try {
@@ -1267,91 +1058,43 @@ router.get('/force-reset', async (req, res) => {
                 socket.ev.removeAllListeners();
                 activeSockets.delete(sanitizedNumber);
                 socketCreationTime.delete(sanitizedNumber);
-                arslanLog(`✅ Disconnected ${sanitizedNumber}`, 'success');
-            } catch (error) {
-                arslanLog(`Disconnect error: ${error.message}`, 'error');
-            }
+            } catch (error) {}
         }
 
         const sessionPath = path.join(__dirname, 'session', `session_${sanitizedNumber}`);
         if (fs.existsSync(sessionPath)) {
-            try {
-                await fs.remove(sessionPath);
-                arslanLog(`✅ Deleted local session`, 'success');
-            } catch (error) {
-                arslanLog(`Failed to delete local session: ${error.message}`, 'error');
-            }
+            try { await fs.remove(sessionPath); } catch (error) {}
         }
 
         try {
             await deleteSessionFromMongoDB(sanitizedNumber);
             await removeNumberFromMongoDB(sanitizedNumber);
-
-            try {
-                const statsPath = path.join(__dirname, 'lib', 'stats', `${sanitizedNumber}.json`);
-                if (fs.existsSync(statsPath)) {
-                    await fs.remove(statsPath);
-                }
-            } catch (_) {}
-
-            arslanLog(`✅ Deleted all MongoDB data`, 'success');
-        } catch (error) {
-            arslanLog(`Failed to delete MongoDB data: ${error.message}`, 'error');
-        }
+        } catch (error) {}
 
         const lockKey = `arslan_lock_${sanitizedNumber}`;
-        if (global[lockKey]) {
-            global[lockKey] = false;
-        }
+        if (global[lockKey]) global[lockKey] = false;
 
-        for (const [key] of messageCache) {
+        // ✅ FIXED: Iterable fix for SmartCache
+        for (const [key] of messageCache.cache) {
             if (key.includes(sanitizedNumber)) {
                 messageCache.delete(key);
             }
         }
 
-        arslanLog(`✅ Force reset completed for ${sanitizedNumber}`, 'success');
-
-        return res.json({
-            status: 'success',
-            message: 'Force reset completed. All data deleted.',
-            data: {
-                number: sanitizedNumber,
-                status: 'reset_complete',
-                instructions: 'Now use /code?number=XXXXX to pair fresh',
-                timestamp: new Date().toISOString()
-            }
-        });
+        return res.json({ status: 'success', message: 'Force reset completed. All data deleted.' });
 
     } catch (error) {
-        arslanLog(`Force reset error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Force reset failed',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Force reset failed', error: error.message });
     }
 });
-
-// ============================================
-// 🔥 CHECK SESSION
-// ============================================
 
 router.get('/check-session', async (req, res) => {
     try {
         const { number } = req.query;
-
-        if (!number) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Number required'
-            });
-        }
-
+        if (!number) return res.status(400).json({ status: 'error', message: 'Number required' });
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
 
         const isActive = activeSockets.has(sanitizedNumber);
-
         let hasMongoSession = false;
         try {
             const session = await getSessionFromMongoDB(sanitizedNumber);
@@ -1363,41 +1106,18 @@ router.get('/check-session', async (req, res) => {
 
         return res.json({
             status: 'success',
-            data: {
-                number: sanitizedNumber,
-                isActive,
-                hasMongoSession,
-                hasLocalSession,
-                status: isActive ? 'connected' : (hasMongoSession ? 'session_exists' : 'new_user'),
-                timestamp: new Date().toISOString()
-            }
+            data: { number: sanitizedNumber, isActive, hasMongoSession, hasLocalSession, status: isActive ? 'connected' : (hasMongoSession ? 'session_exists' : 'new_user'), timestamp: new Date().toISOString() }
         });
 
     } catch (error) {
-        arslanLog(`Check session error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to check session',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed to check session', error: error.message });
     }
 });
-
-// ============================================
-// 🔥 PAIRING STATUS
-// ============================================
 
 router.get('/pair-status', async (req, res) => {
     try {
         const { number } = req.query;
-
-        if (!number) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Number required'
-            });
-        }
-
+        if (!number) return res.status(400).json({ status: 'error', message: 'Number required' });
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
 
         const isActive = activeSockets.has(sanitizedNumber);
@@ -1416,52 +1136,20 @@ router.get('/pair-status', async (req, res) => {
         let canForce = false;
 
         if (isActive) {
-            status = 'connected';
-            message = 'Number is already connected and active.';
-            canPair = false;
-            canForce = true;
+            status = 'connected'; message = 'Number is already connected and active.'; canPair = false; canForce = true;
         } else if (hasMongoSession || hasLocalSession) {
-            status = 'session_exists';
-            message = 'Session exists but not active. Use /code to reconnect or /force-code to force pair.';
-            canPair = true;
-            canForce = true;
+            status = 'session_exists'; message = 'Session exists but not active. Use /code to reconnect or /force-code to force pair.'; canPair = true; canForce = true;
         }
 
         return res.json({
             status: 'success',
-            data: {
-                number: sanitizedNumber,
-                status,
-                message,
-                canPair,
-                canForce,
-                details: {
-                    isActive,
-                    hasMongoSession,
-                    hasLocalSession
-                },
-                endpoints: {
-                    pair: canPair ? `/code?number=${sanitizedNumber}` : null,
-                    force: canForce ? `/force-code?number=${sanitizedNumber}` : null,
-                    reset: canForce ? `/force-reset?number=${sanitizedNumber}` : null
-                },
-                timestamp: new Date().toISOString()
-            }
+            data: { number: sanitizedNumber, status, message, canPair, canForce, details: { isActive, hasMongoSession, hasLocalSession }, endpoints: { pair: canPair ? `/code?number=${sanitizedNumber}` : null, force: canForce ? `/force-code?number=${sanitizedNumber}` : null, reset: canForce ? `/force-reset?number=${sanitizedNumber}` : null }, timestamp: new Date().toISOString() }
         });
 
     } catch (error) {
-        arslanLog(`Pair status error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to get pair status',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed to get pair status', error: error.message });
     }
 });
-
-// ============================================
-// 🚀 API ROUTES
-// ============================================
 
 router.get('/', (req, res) => res.sendFile(path.join(__dirname, 'pair.html')));
 router.get('/code', async (req, res) => {
@@ -1501,16 +1189,8 @@ router.get('/disconnect', async (req, res) => {
     }
 });
 
-router.get('/active', (req, res) => res.json({
-    count: activeSockets.size,
-    numbers: Array.from(activeSockets.keys())
-}));
-
-router.get('/ping', (req, res) => res.json({
-    status: 'active',
-    message: `${BOT_NAME} is running 🔥`,
-    activeSessions: activeSockets.size
-}));
+router.get('/active', (req, res) => res.json({ count: activeSockets.size, numbers: Array.from(activeSockets.keys()) }));
+router.get('/ping', (req, res) => res.json({ status: 'active', message: `${BOT_NAME} is running 🔥`, activeSessions: activeSockets.size }));
 
 router.get('/connect-all', async (req, res) => {
     try {
@@ -1546,9 +1226,7 @@ router.get('/update-config', async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await saveOTPToMongoDB(n, otp, newConfig);
     try {
-        await socket.sendMessage(jidNormalizedUser(socket.user.id), {
-            text: `*🔐 ${BOT_NAME} — CONFIG UPDATE*\n\nOTP: *${otp}*\nValid 5 minutes`
-        });
+        await socket.sendMessage(jidNormalizedUser(socket.user.id), { text: `*🔐 ${BOT_NAME} — CONFIG UPDATE*\n\nOTP: *${otp}*\nValid 5 minutes` });
         res.json({ status: 'otp_sent' });
     } catch (e) {
         res.status(500).json({ error: 'Failed to send OTP' });
@@ -1580,320 +1258,104 @@ router.get('/stats', async (req, res) => {
     }
 });
 
-// ============================================
-// 📁 REACT API - NO OWNER NUMBER REQUIRED
-// ============================================
-
 router.get('/react', async (req, res) => {
     try {
         let { link, channelId, postId, emojis, count } = req.query;
-
-        // ── FIXED: No number required, use first connected user ──
-        if (activeSockets.size === 0) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'No connected users available. Please pair first.'
-            });
-        }
-
-        // Get first connected user as admin
+        if (activeSockets.size === 0) return res.status(400).json({ status: 'error', message: 'No connected users available. Please pair first.' });
         const adminNumber = Array.from(activeSockets.keys())[0];
 
         if (link && !channelId) {
-            let linkMatch = null;
-            linkMatch = link.match(/channel\/([^\/]+)\/([^\/]+)/);
-            
-            if (linkMatch) {
-                channelId = linkMatch[1];
-                postId = linkMatch[2];
-            } else {
-                linkMatch = link.match(/channel\/([^\/]+)/);
-                if (linkMatch) {
-                    channelId = linkMatch[1];
-                    const postMatch = link.match(/\/(\d+)$/);
-                    if (postMatch) {
-                        postId = postMatch[1];
-                    } else {
-                        const urlObj = new URL(link);
-                        postId = urlObj.searchParams.get('post') || urlObj.searchParams.get('id') || null;
-                    }
-                }
-            }
-            
-            if (!channelId) {
-                const pathParts = link.split('/');
-                for (let i = 0; i < pathParts.length; i++) {
-                    if (pathParts[i] === 'channel' && i + 1 < pathParts.length) {
-                        channelId = pathParts[i + 1];
-                        if (i + 2 < pathParts.length) {
-                            postId = pathParts[i + 2];
-                        }
-                        break;
-                    }
-                }
-            }
+            let linkMatch = link.match(/channel\/([^\/]+)\/([^\/]+)/);
+            if (linkMatch) { channelId = linkMatch[1]; postId = linkMatch[2]; }
         }
-
-        if (!channelId) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Channel ID not found. Use format: https://whatsapp.com/channel/ID/POSTID'
-            });
-        }
+        if (!channelId) return res.status(400).json({ status: 'error', message: 'Channel ID not found.' });
 
         if (!postId) {
             try {
                 const channelJid = channelId.includes('@') ? channelId : `${channelId}@newsletter`;
                 const socket = activeSockets.get(adminNumber);
-                const result = await socket.sendMessage(channelJid, {
-                    getMessages: {
-                        limit: 1
-                    }
-                });
-                
+                const result = await socket.sendMessage(channelJid, { getMessages: { limit: 1 } });
                 if (result && result.messages && result.messages.length > 0) {
                     postId = result.messages[0].key.id;
-                    arslanLog(`Auto-detected post ID: ${postId}`, 'success');
                 } else {
-                    return res.status(400).json({
-                        status: 'error',
-                        message: 'Could not auto-detect post ID. Please provide full link: https://whatsapp.com/channel/ID/POSTID'
-                    });
+                    return res.status(400).json({ status: 'error', message: 'Could not auto-detect post ID.' });
                 }
             } catch (e) {
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'Post ID required. Use full link: https://whatsapp.com/channel/ID/POSTID'
-                });
+                return res.status(400).json({ status: 'error', message: 'Post ID required.' });
             }
         }
 
-        let emojiList = [];
-        if (emojis) {
-            emojiList = decodeURIComponent(emojis).split(',').map(e => e.trim());
-        } else {
-            emojiList = ['❤️', '🔥', '👑', '😍', '💀', '🎉', '✨', '💯'];
-        }
-
+        let emojiList = emojis ? decodeURIComponent(emojis).split(',').map(e => e.trim()) : ['❤️', '🔥', '👑', '😍', '💀', '🎉', '✨', '💯'];
         const result = await handleReactDirect(adminNumber, channelId, postId, emojiList, count);
 
-        return res.json({
-            status: 'success',
-            message: `${result.successCount || 0} reactions sent, ${result.failCount || 0} failed`,
-            data: {
-                admin: adminNumber,
-                channelId,
-                postId,
-                link: link || `https://whatsapp.com/channel/${channelId}/${postId}`,
-                emojis: emojiList,
-                ...result,
-                timestamp: new Date().toISOString()
-            }
-        });
-
+        return res.json({ status: 'success', message: `${result.successCount || 0} reactions sent`, data: { admin: adminNumber, channelId, postId, link: link || `https://whatsapp.com/channel/${channelId}/${postId}`, emojis: emojiList, ...result, timestamp: new Date().toISOString() } });
     } catch (error) {
-        arslanLog(`React error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to react',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed to react', error: error.message });
     }
 });
-
-// ============================================
-// 📁 VOTE API - NO OWNER NUMBER REQUIRED
-// ============================================
 
 router.get('/vote', async (req, res) => {
     try {
         let { link, pollId, option, groupId, count } = req.query;
-
-        // ── FIXED: No number required, use first connected user ──
-        if (activeSockets.size === 0) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'No connected users available. Please pair first.'
-            });
-        }
-
+        if (activeSockets.size === 0) return res.status(400).json({ status: 'error', message: 'No connected users available. Please pair first.' });
         const adminNumber = Array.from(activeSockets.keys())[0];
 
-        if (option === undefined || option === null) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Option required (0, 1, 2, etc.)'
-            });
-        }
+        if (option === undefined || option === null) return res.status(400).json({ status: 'error', message: 'Option required (0, 1, 2, etc.)' });
 
         if (link && !pollId) {
             let linkMatch = link.match(/channel\/([^\/]+)\/([^\/]+)/);
-            if (linkMatch) {
-                const channelId = linkMatch[1];
-                const postId = linkMatch[2];
-                if (channelId && postId) {
-                    pollId = `${channelId}_${postId}`;
-                }
-            } else {
-                const pathParts = link.split('/');
-                for (let i = 0; i < pathParts.length; i++) {
-                    if (pathParts[i] === 'channel' && i + 1 < pathParts.length) {
-                        const channelId = pathParts[i + 1];
-                        const postId = pathParts[i + 2] || null;
-                        if (channelId && postId) {
-                            pollId = `${channelId}_${postId}`;
-                        }
-                        break;
-                    }
-                }
-            }
+            if (linkMatch) { pollId = `${linkMatch[1]}_${linkMatch[2]}`; }
         }
-
-        if (!pollId) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Poll ID or link required. Format: https://whatsapp.com/channel/ID/POSTID'
-            });
-        }
-
-        if (groupId) {
-            pollId = groupId.includes('@') ? `${groupId}_${pollId}` : `${groupId}@g.us_${pollId}`;
-        }
+        if (!pollId) return res.status(400).json({ status: 'error', message: 'Poll ID or link required.' });
+        if (groupId) { pollId = groupId.includes('@') ? `${groupId}_${pollId}` : `${groupId}@g.us_${pollId}`; }
 
         const result = await handleVoteDirect(adminNumber, pollId, option, count);
-
-        return res.json({
-            status: 'success',
-            message: `${result.successCount || 0} votes cast, ${result.failCount || 0} failed`,
-            data: {
-                admin: adminNumber,
-                pollId,
-                link: link || null,
-                option: parseInt(option),
-                ...result,
-                timestamp: new Date().toISOString()
-            }
-        });
-
+        return res.json({ status: 'success', message: `${result.successCount || 0} votes cast`, data: { admin: adminNumber, pollId, link: link || null, option: parseInt(option), ...result, timestamp: new Date().toISOString() } });
     } catch (error) {
-        arslanLog(`Vote error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to vote',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed to vote', error: error.message });
     }
 });
-
-// ============================================
-// 🎯 REACT + VOTE COMBINED
-// ============================================
 
 router.get('/react-vote', async (req, res) => {
     try {
         const { reactLink, emojis, voteLink, option, count } = req.query;
-
-        if (activeSockets.size === 0) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'No connected users available. Please pair first.'
-            });
-        }
-
+        if (activeSockets.size === 0) return res.status(400).json({ status: 'error', message: 'No connected users available. Please pair first.' });
         const adminNumber = Array.from(activeSockets.keys())[0];
-
-        const results = {
-            reactions: null,
-            votes: null
-        };
+        const results = { reactions: null, votes: null };
 
         if (reactLink) {
             const linkMatch = reactLink.match(/channel\/(\d+)(?:\/(\d+))?/);
-            if (linkMatch) {
-                const channelId = linkMatch[1];
-                const postId = linkMatch[2];
-                if (channelId && postId) {
-                    const emojiList = emojis ? emojis.split(',').map(e => e.trim()) : ['❤️', '🔥', '👑'];
-                    results.reactions = await handleReactDirect(adminNumber, channelId, postId, emojiList, count);
-                }
+            if (linkMatch && linkMatch[2]) {
+                const emojiList = emojis ? emojis.split(',').map(e => e.trim()) : ['❤️', '🔥', '👑'];
+                results.reactions = await handleReactDirect(adminNumber, linkMatch[1], linkMatch[2], emojiList, count);
             }
         }
 
         if (voteLink && option !== undefined) {
             const linkMatch = voteLink.match(/channel\/(\d+)(?:\/(\d+))?/);
-            if (linkMatch) {
-                const channelId = linkMatch[1];
-                const postId = linkMatch[2];
-                if (channelId && postId) {
-                    const pollId = `${channelId}_${postId}`;
-                    results.votes = await handleVoteDirect(adminNumber, pollId, option, count);
-                }
+            if (linkMatch && linkMatch[2]) {
+                results.votes = await handleVoteDirect(adminNumber, `${linkMatch[1]}_${linkMatch[2]}`, option, count);
             }
         }
 
-        return res.json({
-            status: 'success',
-            message: 'React + Vote completed',
-            data: {
-                admin: adminNumber,
-                reactLink,
-                voteLink,
-                results,
-                timestamp: new Date().toISOString()
-            }
-        });
-
+        return res.json({ status: 'success', message: 'React + Vote completed', data: { admin: adminNumber, reactLink, voteLink, results, timestamp: new Date().toISOString() } });
     } catch (error) {
-        arslanLog(`React-vote error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed', error: error.message });
     }
 });
-
-// ============================================
-// 👥 GET ALL CONNECTED USERS
-// ============================================
 
 router.get('/users', async (req, res) => {
     try {
         const allUsers = Array.from(activeSockets.keys());
-        const userDetails = [];
-
-        for (const user of allUsers) {
+        const userDetails = allUsers.map(user => {
             const socket = activeSockets.get(user);
-            const userJid = jidNormalizedUser(socket.user.id);
-            userDetails.push({
-                number: user,
-                jid: userJid,
-                isAdmin: false
-            });
-        }
-
-        return res.json({
-            status: 'success',
-            data: {
-                totalUsers: allUsers.length,
-                users: userDetails,
-                timestamp: new Date().toISOString()
-            }
+            return { number: user, jid: jidNormalizedUser(socket.user.id), isAdmin: false };
         });
-
+        return res.json({ status: 'success', data: { totalUsers: allUsers.length, users: userDetails, timestamp: new Date().toISOString() } });
     } catch (error) {
-        arslanLog(`Users error: ${error.message}`, 'error');
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to get users',
-            error: error.message
-        });
+        return res.status(500).json({ status: 'error', message: 'Failed to get users', error: error.message });
     }
 });
-
-// ============================================
-// 🚀 AUTO RECONNECT
-// ============================================
 
 async function autoReconnectFromMongoDB() {
     try {
@@ -1915,10 +1377,6 @@ async function autoReconnectFromMongoDB() {
 
 setTimeout(() => { autoReconnectFromMongoDB(); }, 3000);
 
-// ============================================
-// 🧹 CLEANUP
-// ============================================
-
 process.on('exit', () => {
     activeSockets.forEach((socket, number) => {
         try { socket.ws.close(); } catch (_) {}
@@ -1932,9 +1390,5 @@ process.on('exit', () => {
 process.on('uncaughtException', (err) => {
     arslanLog(`Uncaught exception: ${err.message}`, 'error');
 });
-
-// ============================================
-// 📤 EXPORT
-// ============================================
 
 module.exports = router;
